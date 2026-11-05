@@ -1,0 +1,4 @@
+*.json
+*.Save
+*.bak
+*.cleanup-backup-*
