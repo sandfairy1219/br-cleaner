@@ -1,7 +1,6 @@
 # br-cleaner
 
 Removes the leftovers that Boss Rush practice mods leave in a Bloons TD 6 profile save.
-The known symptom is tower income stuck at 25% after the mod is removed.
 
 ## What is being cleaned
 
