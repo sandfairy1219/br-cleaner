@@ -1,18 +1,25 @@
 <#
-    Boss Rush practice cleanup for Bloons TD 6
-    Resets the challenge-editor model that Boss Rush practice mods leave behind
-    (income multiplier 0.25 etc.) directly in the local save file.
+    br-cleaner - Boss Rush practice cleanup for Bloons TD 6
 
-    Usage:  Clean-BossRush.ps1 [-GameDir <path>] [-Save <file>] [-Monke <path>] [-Minimal]
-            Default: full cleanup. -Minimal: income multiplier only.
-    Close the game first. A timestamped backup is written next to the save.
+    Practice mods write into the game's live challenge model, which the game persists in the
+    profile: 25% tower income, the Endurance round set, a 999999 lives cap, extra revives and
+    an end round 10000 past the start round. None of it is restored when the mod is removed.
+
+    This edits the save file directly. No mod loader, nothing loaded into the game.
+
+    Usage:
+      Clean-BossRush.bat                 full cleanup (default)
+      Clean-BossRush.bat -Check          print the current values, change nothing
+      Clean-BossRush.bat -Minimal        income multipliers only
+      Clean-BossRush.bat -Save <file>    use a specific Profile.Save
 #>
 param(
     [string]$GameDir   = $(if ($env:USERPROFILE) { $env:USERPROFILE + "\AppData\LocalLow\Ninja Kiwi\BloonsTD6" } else { "" }),
     [string]$Monke     = (Join-Path $PSScriptRoot "monke.exe"),
     [string]$Save      = "",
     [string[]]$SearchRoots = @(),
-    [switch]$Minimal
+    [switch]$Minimal,
+    [switch]$Check
 )
 
 $ErrorActionPreference = "Stop"
@@ -23,13 +30,15 @@ Write-Host "=== Boss Rush practice cleanup ===" -ForegroundColor Cyan
 
 if (-not (Test-Path $Monke)) { $Monke = Join-Path $PSScriptRoot "tools\monke.exe" }
 if (-not (Test-Path $Monke)) { Fail "monke.exe not found: $Monke" }
-# save location is searched below (Steam userdata, LocalLow, Epic)
 
-$proc = Get-Process -Name "BloonsTD6" -ErrorAction SilentlyContinue
-if ($proc) { Fail "Bloons TD 6 is running. Close it completely and run again." }
+if (-not $Check) {
+    $proc = Get-Process -Name "BloonsTD6" -ErrorAction SilentlyContinue
+    if ($proc) { Fail "Bloons TD 6 is running. Close it completely and run again." }
+}
 
-# Locate the profile save. Steam keeps it under userdata\<id>\960090\local\link\<guid>\
-# and the LocalLow folder is often just a link stub, so search every known root.
+# --- locate the profile save -------------------------------------------------
+# Steam keeps it under userdata\<id>\960090\local\link\<guid>\; the LocalLow folder is
+# often only a link stub, so every known root is searched.
 $candidates = @()
 if ($Save) {
     if (Test-Path $Save) { $candidates += Get-Item -LiteralPath $Save } else { Fail "save file not found: $Save" }
@@ -52,92 +61,94 @@ foreach ($root in ($roots | Where-Object { $_ } | Select-Object -Unique)) {
 if (-not $candidates) {
     Write-Host "No profile save found. Searched:" -ForegroundColor Yellow
     $roots | Where-Object { $_ } | Select-Object -Unique | ForEach-Object { Write-Host ("  " + $_) }
-    Write-Host "`nPass the file explicitly: Clean-BossRush.bat -Save <path to Profile.Save>" -ForegroundColor Yellow
-    Fail "no Profile save file found"
+    Fail "no Profile save file found (pass -Save <path>)"
 }
 
 $saveFile = $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($candidates.Count -gt 1) {
-    Write-Host "`nfound several profile saves, using the most recent:" -ForegroundColor Yellow
+    Write-Host "`nseveral profile saves found, using the most recent:" -ForegroundColor Yellow
     $candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 10 |
         ForEach-Object { Write-Host ("  " + $_.LastWriteTime + "  " + $_.FullName) }
     Write-Host "  (wrong one? pass -Save <full path>)" -ForegroundColor Yellow
 }
-Write-Host ("save   : " + $saveFile.FullName + "  (" + $saveFile.Length + " bytes)")
-Write-Host ("monke  : " + $Monke)
-if ($Minimal) { Write-Host "mode   : minimal (income only)" } else { Write-Host "mode   : full" }
+Write-Host ("`nsave   : " + $saveFile.FullName)
+Write-Host ("modified: " + $saveFile.LastWriteTime + "   (" + $saveFile.Length + " bytes)")
+Write-Host ("monke   : " + $Monke)
+if ($Check) { Write-Host "mode    : check only" } elseif ($Minimal) { Write-Host "mode    : minimal" } else { Write-Host "mode    : full" }
 
-$stamp  = Get-Date -Format "yyyyMMdd_HHmmss"
-$backup = Join-Path $saveFile.DirectoryName ("Profile.Save.cleanup-backup-" + $stamp)
-Copy-Item -Path $saveFile.FullName -Destination $backup -Force
-Write-Host ("backup : " + $backup) -ForegroundColor Green
-
-$json = Join-Path ([System.IO.Path]::GetTempPath()) ("btd6_profile_" + $stamp + ".json")
-$out  = Join-Path ([System.IO.Path]::GetTempPath()) ("btd6_profile_" + $stamp + "_new.json")
+# --- unpack -----------------------------------------------------------------
+$stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$tmp   = [System.IO.Path]::GetTempPath()
+$json  = Join-Path $tmp ("btd6_profile_" + $stamp + ".json")
+$out   = Join-Path $tmp ("btd6_profile_" + $stamp + "_new.json")
 
 & $Monke unpack $saveFile.FullName -o $json --game btd6 --force | Out-Null
-if (-not (Test-Path $json)) { Fail "unpack failed" }
-
+if (-not (Test-Path $json)) { Fail "unpack failed (save format not supported) - nothing was changed" }
 $text = [System.IO.File]::ReadAllText($json)
 
-$m = [regex]::Match($text, '"challengeEditorModel"\s*:\s*\{')
-if (-not $m.Success) { Fail "challengeEditorModel not found in the save (nothing to clean)" }
-
-$start = $m.Index + $m.Length - 1
-$depth = 0
-$end = -1
-for ($i = $start; $i -lt $text.Length; $i++) {
-    $c = $text[$i]
-    if ($c -eq '{') { $depth++ }
-    elseif ($c -eq '}') { $depth--; if ($depth -eq 0) { $end = $i; break } }
-}
-if ($end -lt 0) { Fail "could not parse challengeEditorModel" }
-
-$obj  = $text.Substring($start, $end - $start + 1)
-$orig = $obj
-
-function Show-Values($blob, $label) {
-    $cash  = [regex]::Match($blob, '"cashModifiers"\s*:\s*(\{[^{}]*\})')
-    $rules = [regex]::Match($blob, '"startRules"\s*:\s*(\{[^{}]*\})')
-    $rs    = [regex]::Match($blob, '"roundSets"\s*:\s*(\[[^\]]*\])')
-    Write-Host ("  " + $label + ".cashModifiers  " + $(if ($cash.Success) { $cash.Groups[1].Value } else { "(none)" }))
-    Write-Host ("  " + $label + ".startRules      " + $(if ($rules.Success) { $rules.Groups[1].Value } else { "(none)" }))
-    Write-Host ("  " + $label + ".roundSets       " + $(if ($rs.Success) { $rs.Groups[1].Value } else { "(none)" }))
+function Show-Hits($blob, $label) {
+    $cash = [regex]::Matches($blob, '"cashModifiers"\s*:\s*(\{[^{}]*\})')
+    $rules = [regex]::Matches($blob, '"startRules"\s*:\s*(\{[^{}]*\})')
+    $rs = [regex]::Matches($blob, '"roundSets"\s*:\s*(\[[^\]]*\])')
+    Write-Host ("  " + $label + ": cashModifiers x" + $cash.Count + "  startRules x" + $rules.Count + "  roundSets x" + $rs.Count)
+    foreach ($m in ($cash | Select-Object -First 6)) { Write-Host ("    cash  " + $m.Groups[1].Value) }
+    foreach ($m in ($rules | Select-Object -First 6)) { Write-Host ("    rules " + $m.Groups[1].Value) }
+    foreach ($m in ($rs | Select-Object -First 6)) { Write-Host ("    rs    " + $m.Groups[1].Value) }
 }
 
-Write-Host "`n-- before --" -ForegroundColor Yellow
-Show-Values $obj "editor"
+Write-Host "`n-- current --" -ForegroundColor Yellow
+Show-Hits $text "profile"
 
-$obj = [regex]::Replace($obj, '"towerCashMultiplier"\s*:\s*[-0-9\.eE]+', '"towerCashMultiplier":1.0')
+# --- patch every occurrence, not only the editor draft ----------------------
+$counts = @{}
+
+function Swap($pattern, $replacement, $name) {
+    $script:working = [regex]::Replace($script:working, $pattern, $replacement)
+    $script:counts[$name] = ([regex]::Matches($script:orig, $pattern)).Count
+}
+
+$orig = $text
+$working = $text
+
+$working = [regex]::Replace($working, '"towerCashMultiplier"\s*:\s*0\.25\d*', '"towerCashMultiplier":1.0')
 
 if (-not $Minimal) {
-    $obj = [regex]::Replace($obj, '"popCashMultiplier"\s*:\s*[-0-9\.eE]+',   '"popCashMultiplier":1.0')
-    $obj = [regex]::Replace($obj, '"roundCashMultiplier"\s*:\s*[-0-9\.eE]+', '"roundCashMultiplier":1.0')
-    $obj = [regex]::Replace($obj, '"roundSets"\s*:\s*\[[^\]]*\]',           '"roundSets":["default"]')
+    $working = [regex]::Replace($working, '"popCashMultiplier"\s*:\s*0\.25\d*',   '"popCashMultiplier":1.0')
+    $working = [regex]::Replace($working, '"roundCashMultiplier"\s*:\s*0\.25\d*', '"roundCashMultiplier":1.0')
+
+    # round sets that still point at the practice round set
+    $working = [regex]::Replace($working, '"roundSets"\s*:\s*\[[^\]]*EnduranceRoundSet[^\]]*\]', '"roundSets":["default"]')
 
     # start rules injected by the practice mods
-    $obj = [regex]::Replace($obj, '"maxLives"\s*:\s*(\d{4,})', {
-        param($mm)
-        if ([int]$mm.Groups[1].Value -ge 9999) { '"maxLives":0' } else { $mm.Value }
+    $working = [regex]::Replace($working, '"maxLives"\s*:\s*(\d{4,})', {
+        param($mm) if ([int]$mm.Groups[1].Value -ge 9999) { '"maxLives":0' } else { $mm.Value }
     })
-    $obj = [regex]::Replace($obj, '"endRound"\s*:\s*(\d+)', {
-        param($mm)
-        if ([int]$mm.Groups[1].Value -ge 1000) { '"endRound":100' } else { $mm.Value }
+    $working = [regex]::Replace($working, '"endRound"\s*:\s*(\d+)', {
+        param($mm) if ([int]$mm.Groups[1].Value -ge 1000) { '"endRound":100' } else { $mm.Value }
     })
-    $obj = [regex]::Replace($obj, '"revives"\s*:\s*([1-9]\d*)', '"revives":0')
+    $working = [regex]::Replace($working, '"revives"\s*:\s*([1-9]\d*)', '"revives":0')
 }
 
-if ($obj -eq $orig) {
+Write-Host "`n-- after --" -ForegroundColor Yellow
+Show-Hits $working "patched"
+
+if ($working -eq $orig) {
     Write-Host "`n[i] nothing to change (already clean)" -ForegroundColor Green
     exit 0
 }
 
-Write-Host "`n-- after --" -ForegroundColor Yellow
-Show-Values $obj "editor"
+if ($Check) {
+    Write-Host "`n[i] check only, the save was not written" -ForegroundColor Green
+    exit 0
+}
 
-$text = $text.Substring(0, $start) + $obj + $text.Substring($end + 1)
+# --- write back -------------------------------------------------------------
+$backup = Join-Path $saveFile.DirectoryName ("Profile.Save.cleanup-backup-" + $stamp)
+Copy-Item -Path $saveFile.FullName -Destination $backup -Force
+Write-Host ("`nbackup : " + $backup) -ForegroundColor Green
+
 $utf8 = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($out, $text, $utf8)
+[System.IO.File]::WriteAllText($out, $working, $utf8)
 
 & $Monke pack $out -o $saveFile.FullName --game btd6 --force | Out-Null
 if ($LASTEXITCODE -ne 0) {
@@ -145,10 +156,15 @@ if ($LASTEXITCODE -ne 0) {
     Fail "pack failed - save restored from backup"
 }
 
-$check = Join-Path ([System.IO.Path]::GetTempPath()) ("btd6_profile_" + $stamp + "_check.json")
-& $Monke unpack $saveFile.FullName -o $check --game btd6 --force | Out-Null
-$ver = [System.IO.File]::ReadAllText($check)
-$v   = [regex]::Match($ver, '"challengeEditorModel"\s*:.*?"towerCashMultiplier"\s*:\s*([-0-9\.eE]+)')
-Write-Host ("`n[OK] saved. challengeEditorModel.towerCashMultiplier = " + $(if ($v.Success) { $v.Groups[1].Value } else { "?" })) -ForegroundColor Green
-Write-Host ("[i] backup kept at: " + $backup)
-Write-Host "[i] Start the game and check tower income on a new challenge."
+$verifyFile = Join-Path $tmp ("btd6_profile_" + $stamp + "_check.json")
+& $Monke unpack $saveFile.FullName -o $verifyFile --game btd6 --force | Out-Null
+$ver = [System.IO.File]::ReadAllText($verifyFile)
+$left = ([regex]::Matches($ver, '"towerCashMultiplier"\s*:\s*([-0-9\.eE]+)')) |
+        ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
+
+Write-Host "`n-- saved --" -ForegroundColor Green
+Show-Hits $ver "profile"
+Write-Host ("`ntowerCashMultiplier values now: " + ($left -join ", "))
+Write-Host ("[OK] written to " + $saveFile.FullName)
+Write-Host ("[i] backup: " + $backup)
+Write-Host "[i] start the game, then run with -Check to confirm the values survived."

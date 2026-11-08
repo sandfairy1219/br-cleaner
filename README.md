@@ -26,9 +26,15 @@ loading anything into the game.
 2. Run `Clean-BossRush.bat`.
 
 ```
-Clean-BossRush.bat            full cleanup (default)
-Clean-BossRush.bat -Minimal   income multiplier only
+Clean-BossRush.bat                   full cleanup (default)
+Clean-BossRush.bat -Check            print the current values, change nothing
+Clean-BossRush.bat -Minimal          income multipliers only
+Clean-BossRush.bat -Save <file>      use a specific Profile.Save
 ```
+
+Every occurrence of the 0.25 multipliers in the profile is rewritten, not only the editor
+draft: saved challenges carry their own `cashModifiers` copy, and the challenge list is what
+the game actually plays.
 
 Both write a timestamped backup next to the save and re-read the save afterwards.
 
