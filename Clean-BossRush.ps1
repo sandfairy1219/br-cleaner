@@ -20,7 +20,8 @@ param(
     [string[]]$SearchRoots = @(),
     [switch]$Minimal,
     [switch]$Check,
-    [switch]$Inspect
+    [switch]$Inspect,
+    [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -125,12 +126,23 @@ Show-Hits $text "profile"
 # A profile without the practice leftovers is left completely untouched, even if it
 # happens to hold values this tool would otherwise normalise (a challenge with revives,
 # a long end round, and so on).
-$polluted = ($text -match '"towerCashMultiplier"\s*:\s*0\.25') -or
-            ($text -match 'EnduranceRoundSet') -or
-            ($text -match '"maxLives"\s*:\s*999999')
+function Count-Match($blob, $pattern) { ([regex]::Matches($blob, $pattern)).Count }
 
-if (-not $polluted -and -not $Check -and -not $Inspect) {
+$sig = [pscustomobject]@{
+    income    = Count-Match $text '"towerCashMultiplier"\s*:\s*0\.25'
+    endurance = Count-Match $text 'EnduranceRoundSet'
+    maxLives  = Count-Match $text '"maxLives"\s*:\s*999999'
+    endRound  = Count-Match $text '"endRound"\s*:\s*\d{4,}'
+    revives   = Count-Match $text '"revives"\s*:\s*[1-9]'
+}
+$polluted = ($sig.income + $sig.endurance + $sig.maxLives) -gt 0
+
+if (-not $polluted -and -not $Force -and -not $Check -and -not $Inspect) {
     Write-Host "`n[i] no Boss Rush leftovers in this profile - nothing to do" -ForegroundColor Green
+    if (($sig.endRound + $sig.revives) -gt 0) {
+        Write-Host ("[i] but the profile still has endRound>999 x" + $sig.endRound + " / revives>0 x" + $sig.revives) -ForegroundColor Yellow
+        Write-Host "[i] those are normal challenge settings, so they are left alone. Use -Force to normalise them too." -ForegroundColor Yellow
+    }
     exit 0
 }
 
@@ -165,6 +177,20 @@ if (-not $Minimal) {
     })
     $working = [regex]::Replace($working, '"revives"\s*:\s*([1-9]\d*)', '"revives":0')
 }
+
+$after = [pscustomobject]@{
+    income    = Count-Match $working '"towerCashMultiplier"\s*:\s*0\.25'
+    endurance = Count-Match $working 'EnduranceRoundSet'
+    maxLives  = Count-Match $working '"maxLives"\s*:\s*999999'
+    endRound  = Count-Match $working '"endRound"\s*:\s*\d{4,}'
+    revives   = Count-Match $working '"revives"\s*:\s*[1-9]'
+}
+Write-Host "`n-- changes --" -ForegroundColor Yellow
+Write-Host ("  towerCashMultiplier 0.25 : " + $sig.income + " -> " + $after.income)
+Write-Host ("  EnduranceRoundSet        : " + $sig.endurance + " -> " + $after.endurance)
+Write-Host ("  maxLives 999999          : " + $sig.maxLives + " -> " + $after.maxLives)
+Write-Host ("  endRound >= 1000         : " + $sig.endRound + " -> " + $after.endRound)
+Write-Host ("  revives > 0              : " + $sig.revives + " -> " + $after.revives)
 
 Write-Host "`n-- after --" -ForegroundColor Yellow
 Show-Hits $working "patched"

@@ -96,9 +96,11 @@ Run them through the `.bat`, for example `Clean-BossRush.bat -Check`.
 | Option | What it does |
 | --- | --- |
 | *(none)* | Full cleanup: income multipliers, round set, lives cap, revives, end round |
+| | Runs only when the Boss Rush signature is present; otherwise it prints `nothing to do` |
 | `-Check` | Prints the values currently stored in the save. **Changes nothing.** |
 | `-Inspect` | Prints every round-related key plus the whole challenge editor model. Read only. |
 | `-Minimal` | Only rewrites the income multipliers (`0.25` -> `1.0`) |
+| `-Force` | Normalise `endRound`/`revives` even when the Boss Rush signature is gone |
 | `-Save "<path>"` | Use a specific `Profile.Save` instead of auto-detecting it |
 | `-GameDir "<path>"` | Extra folder to search for the save |
 
