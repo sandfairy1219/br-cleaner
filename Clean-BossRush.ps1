@@ -19,7 +19,8 @@ param(
     [string]$Save      = "",
     [string[]]$SearchRoots = @(),
     [switch]$Minimal,
-    [switch]$Check
+    [switch]$Check,
+    [switch]$Inspect
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +97,27 @@ function Show-Hits($blob, $label) {
     foreach ($m in ($rs | Select-Object -First 6)) { Write-Host ("    rs    " + $m.Groups[1].Value) }
 }
 
+if ($Inspect) {
+    Write-Host "`n-- round related keys --" -ForegroundColor Yellow
+    $seen = @{}
+    foreach ($m in [regex]::Matches($text, '"([A-Za-z0-9_]*round[A-Za-z0-9_]*)"\s*:\s*("[^"]*"|\[[^\]]*\]|[-0-9.]+|true|false)')) {
+        $line = $m.Groups[1].Value + " = " + $m.Groups[2].Value
+        if ($line.Length -gt 160) { $line = $line.Substring(0,160) + "..." }
+        if (-not $seen.ContainsKey($line)) { $seen[$line] = 1; Write-Host ("  " + $line) }
+    }
+    Write-Host "`n-- editor model --" -ForegroundColor Yellow
+    $em = [regex]::Match($text, '"challengeEditorModel"\s*:\s*\{')
+    if ($em.Success) {
+        $s0 = $em.Index + $em.Length - 1; $d0 = 0; $e0 = -1
+        for ($i = $s0; $i -lt $text.Length; $i++) {
+            $c = $text[$i]
+            if ($c -eq '{') { $d0++ } elseif ($c -eq '}') { $d0--; if ($d0 -eq 0) { $e0 = $i; break } }
+        }
+        if ($e0 -gt 0) { Write-Host ("  " + $text.Substring($s0, [Math]::Min(700, $e0 - $s0 + 1))) }
+    }
+    Write-Host ""
+}
+
 Write-Host "`n-- current --" -ForegroundColor Yellow
 Show-Hits $text "profile"
 
@@ -118,6 +140,8 @@ if (-not $Minimal) {
 
     # round sets that still point at the practice round set
     $working = [regex]::Replace($working, '"roundSets"\s*:\s*\[[^\]]*EnduranceRoundSet[^\]]*\]', '"roundSets":["default"]')
+    # any other field holding the practice round set by name
+    $working = [regex]::Replace($working, '"EnduranceRoundSet"', '"default"')
 
     # start rules injected by the practice mods
     $working = [regex]::Replace($working, '"maxLives"\s*:\s*(\d{4,})', {
@@ -137,8 +161,8 @@ if ($working -eq $orig) {
     exit 0
 }
 
-if ($Check) {
-    Write-Host "`n[i] check only, the save was not written" -ForegroundColor Green
+if ($Check -or $Inspect) {
+    Write-Host "`n[i] read only, the save was not written" -ForegroundColor Green
     exit 0
 }
 
