@@ -121,6 +121,19 @@ if ($Inspect) {
 Write-Host "`n-- current --" -ForegroundColor Yellow
 Show-Hits $text "profile"
 
+# --- safety guard ----------------------------------------------------------
+# A profile without the practice leftovers is left completely untouched, even if it
+# happens to hold values this tool would otherwise normalise (a challenge with revives,
+# a long end round, and so on).
+$polluted = ($text -match '"towerCashMultiplier"\s*:\s*0\.25') -or
+            ($text -match 'EnduranceRoundSet') -or
+            ($text -match '"maxLives"\s*:\s*999999')
+
+if (-not $polluted -and -not $Check -and -not $Inspect) {
+    Write-Host "`n[i] no Boss Rush leftovers in this profile - nothing to do" -ForegroundColor Green
+    exit 0
+}
+
 # --- patch every occurrence, not only the editor draft ----------------------
 $counts = @{}
 

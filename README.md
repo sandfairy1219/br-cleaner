@@ -144,6 +144,10 @@ profile is uploaded and the cloud copy is replaced.
    tool is writing.
 8. **Failure is safe:** if unpacking or packing fails, the original file is restored from the
    backup automatically and nothing is changed.
+9. **A healthy profile is never touched.** Before patching, the tool checks for the Boss Rush
+   signature (`0.25` income, `EnduranceRoundSet`, `maxLives = 999999`). If none of it is
+   present it prints `no Boss Rush leftovers in this profile - nothing to do` and exits
+   without writing, so a normal profile is byte-for-byte identical afterwards.
 
 ---
 
